@@ -141,6 +141,8 @@ def get_pp_loc_part2(cell, kpts=None):
             vpploc.append(v)
     if kpts is None or numpy.shape(kpts) == (3,):
         vpploc = vpploc[0]
+        print('!!!!!! gamma point in original func part2', numpy.shape(kpts) )
+    print('!!!!!! gamma point unnoticed in original func part2', numpy.shape(kpts) )
     return vpploc
 
 
@@ -179,6 +181,295 @@ def get_pp_nl(cell, kpts=None):
         ppnl = ppnl[0]
     return ppnl
 
+##### TODO rm my funcs
+def get_pp_loc_part2_atomic(cell, kpts=None):
+    '''PRB, 58, 3641 Eq (1), integrals associated to C1, C2, C3, C4
+    '''
+    from pyscf.pbc.df import incore
+    print('kpts in get_pp_loc_part2_atomic', kpts, type(kpts) )
+    if kpts is None:
+        kpts_lst = numpy.zeros((1,3))
+    else:
+        kpts_lst = numpy.reshape(kpts, (-1,3))
+    nkpts = len(kpts_lst)
+    natm = cell.natm
+
+    intors = ('int3c2e', 'int3c1e', 'int3c1e_r2_origk',
+              'int3c1e_r4_origk', 'int3c1e_r6_origk')
+    kptij_lst = numpy.hstack((kpts_lst,kpts_lst)).reshape(-1,2,3)
+    buf = 0
+    buf2 = 0
+    for cn in range(1, 5):
+        fakecell = fake_cell_vloc(cell, cn)
+        if fakecell.nbas > 0:
+            # ao values on a grid, right? TODO
+            v = incore.aux_e2(cell, fakecell, intors[cn], aosym='s2', comp=1,
+                              kptij_lst=kptij_lst)
+    #        print('      v        in part2', numpy.shape(v))
+            buf += numpy.einsum('...i->...', v)
+            # FIXME this is only correct if all the atoms have pp and exact same nr C coeff. that are nonzero
+            # i.e. same nr coeff.
+            # preallocate size and shape of the array wanted and transfer things correctly
+            # for each i transfers into the correct position of the output array
+            buf2 += numpy.einsum('...i->i...', v)
+    #        print('      buf,buf2        in part2', numpy.shape(buf), numpy.shape(buf2) )
+
+    # if fakecell.nbas are all < 0, buf is 0 and we check for elements in the system 
+    if isinstance(buf, int):
+    #    print('  buf is int   ')
+        if any(cell.atom_symbol(ia) in cell._pseudo for ia in range(cell.natm)):
+    #        print( '     passed')
+            pass
+        else:
+            lib.logger.warn(cell, 'cell.pseudo was specified but its elements %s '
+                             'were not found in the system.', cell._pseudo.keys())
+        # list of zeros, length nkpts
+        # TODO update here
+        vpploc = [0] * nkpts
+    #    print('       vploc created as ', numpy.shape(vpploc) )
+    else:
+        buf = buf.reshape(nkpts,-1)
+        buf2 = buf2.reshape(natm, nkpts,-1)
+        # indices: k-kpoint, i-atom, x-aopair
+        buf2 = numpy.einsum('ikx->kix', buf2)
+    #    print('       buf, buf2 reshaped as ', numpy.shape(buf), numpy.shape(buf2) )
+        vpploc = []
+        vpploc2 = []
+        # now have the triangular matrix for each k (triangular of nao x nao is n_aopairs)
+        # unpack here to nao x nao for each atom
+        for k, kpt in enumerate(kpts_lst):
+    #        print('   before unpacking buf[k]  ', numpy.shape(buf[k]) )
+            vpploc2_1at_kpts = []
+            v = lib.unpack_tril(buf[k])
+            for i in range(natm):
+    #            print('   before unpacking buf2[k]  ', numpy.shape(buf2[k,i]) )
+                v2 = lib.unpack_tril(buf2[k,i,:])
+                if abs(kpt).sum() < 1e-9:  # gamma_point:
+                    v2 = v2.real
+                vpploc2_1at_kpts.append(v2)
+    #            print('   after unpacking buf2[k,i] to v[i]  ', numpy.shape(vpploc2_1at_kpts[i]))
+    #        print('   after unpacking buf[k] to v  ', numpy.shape(v))
+            if abs(kpt).sum() < 1e-9:  # gamma_point:
+                v = v.real
+            vpploc.append(v)
+            vpploc2.append(vpploc2_1at_kpts)
+    #        print('gamma point: vpploc appended v ', numpy.shape(vpploc) )
+    #        print('gamma point: vpploc2 appended v2 ', numpy.shape(vpploc2) )
+    #print('kpts', kpts, numpy.shape(kpts))
+    # when only gamma point, the n_k x nao x nao tensor -> nao x nao matrix 
+    # FIXME why does this not work?
+    if kpts is None or numpy.shape(kpts) == (3,):
+        print('went here')
+        vpploc = vpploc[0]
+        vpploc2 = vpploc2[0]
+#        print('chosen vpploc[0]', numpy.shape(vpploc))
+#        print('chosen vpploc2[0]', numpy.shape(vpploc2))
+#        for k, kpt in enumerate(kpts_lst):
+#            print('   before unpacking buf[k]  ', numpy.shape(buf[k]))
+#            v = lib.unpack_tril(buf[k])
+#            print('   after unpacking buf[k] to v  ', numpy.shape(v))
+#            if abs(kpt).sum() < 1e-9:  # gamma_point:
+#                v = v.real
+#            vpploc.append(v)
+#            print('gamma point: vpploc appended v ', numpy.shape(vpploc) )
+#    if kpts is None or numpy.shape(kpts) == (3,):
+#        vpploc = vpploc[0]
+#        print('chosen vpploc[0]', numpy.shape(vpploc))
+#    print('is vpploc same as vpploc2?')
+#    print(numpy.shape(vpploc), numpy.shape(vpploc2))
+#    print(numpy.allclose(vpploc, numpy.einsum('kiab->kab', vpploc2) ) )
+    return vpploc2
+
+
+
+def get_pp_nl_atomic(cell, kpts=None):
+    # non local contribution
+    if kpts is None:
+        kpts_lst = numpy.zeros((1,3))
+    else:
+        kpts_lst = numpy.reshape(kpts, (-1,3))
+    nkpts = len(kpts_lst)
+
+    #Generate fake cell for V_{nl}.gaussian function p_i^l Y_{lm}. 
+    # Function p_i^l (PRB, 58, 3641 Eq 3) 
+    # TODO need to import fake_cell_vnl(cell), _int_vnl(cell, fakecell, hl_blocks, kpts_lst)
+    # Y_lm: spherical harmonic, l ang.mom. qnr
+    # p_i^l: Gaussian projectors; rela&recipr.space: projectors have a form of Gaussian x polyn.
+    # hl_blocks: coeff. for nonlocal projectors.
+    # i &j run up to 3 ..never larger atom cores than l=3 (d-orbs)
+    fakecell, hl_blocks = fake_cell_vnl(cell)
+    #'''Vnuc - Vloc'''
+    ppnl_half = _int_vnl(cell, fakecell, hl_blocks, kpts_lst)
+    ppnl_half1 = _int_vnl_atomic(cell, fakecell, hl_blocks, kpts_lst)
+    print('ppnl_half in get_pp_nl_atomic', numpy.shape(ppnl_half) )
+    print('ppnl_half1 in get_pp_nl_atomic', numpy.shape(ppnl_half1) )
+    nao = cell.nao_nr()
+    natm = cell.natm
+    buf = numpy.empty((3*9*nao), dtype=numpy.complex128)
+
+    # We set this equal to zeros in case hl_blocks loop is skipped
+    # and ppnl is returned
+    ppnl = numpy.zeros((nkpts,nao,nao), dtype=numpy.complex128)
+    ppnl1 = numpy.zeros((nkpts,natm,nao,nao), dtype=numpy.complex128)
+    for k, kpt in enumerate(kpts_lst):
+        offset = [0] * 3
+        print('hlblocks in get_pp_nl_atomic', numpy.shape(hl_blocks), hl_blocks)
+        # hlblocks: for each atom&ang.mom. i have a matrix of coeff. 
+        # e.g. 2ang.mom. on two atoms A and B would give A1 1x1 matrix, A2 1x1 matrix, 
+        # B1 1x1 matrix, B2 1x1 matrix. if only one kind of a projector for this ang.mom. for this atom
+        for ib, hl in enumerate(hl_blocks):
+            # NEW this loop is over hlij for all atoms and ang.mom.(i)
+            # i think this is shell, hl coeff pair, but could be atom, hl coefficients pair (how likely?)..
+            # either way ib is bas_id and called with bas_atom gives diff. atom ids..
+            print('ib, hl in hl_blocks', ib, hl)
+            l = fakecell.bas_angular(ib)
+            print('atom in fakecell that bas sits on', fakecell.bas_atom(ib))
+            atm_id_hl = fakecell.bas_atom(ib)
+            # TODO use atom id to put into the right ppnl1[nkpts, NATM, nao, nao]
+            # l is the angular mom. qnr associated with given basis (ib used here as bas_id)
+            print('l in get_pp_nl_atomic', type(l), l)
+            # orb magn nr 2L+1
+            nd = 2 * l + 1
+            # dim of the hl (non-local) coeff. array
+            hl_dim = hl.shape[0]
+            print('nd, hldim[0] in get_pp_nl_atomic', nd, hl_dim)
+            ilp = numpy.ndarray((hl_dim,nd,nao), dtype=numpy.complex128, buffer=buf)
+            for i in range(hl_dim):
+                print('loop over hldim, i   in get_pp_nl_atomic', i)
+                print('inside loop over i: hl block nr, value   in get_pp_nl_atomic', ib, hl)
+                p0 = offset[i]
+                print('first p0  in get_pp_nl_atomic', p0, nd)
+                # so maybe this is p_il projectors with specific i,j associated with 
+                # hl coeff. nrs (r(i) probably)
+                # that gets contracted later with  h_lij, p_jl 
+                # p0 takes care that the right m,l spherical harm are taken in projectors?
+                ilp[i] = ppnl_half[i][k][p0:p0+nd]
+                print('in get_pp_nl_atomic, ilp[i] = ppnl_half[i][k][p0:p0+nd] i k', i, k)
+                print('in get_pp_nl_atomic, ppnl_half is (nkpts, ni, nj)', ppnl_half)
+                print('ilp[i] in loop   in get_pp_nl_atomic', ilp[i])
+                offset[i] = p0 + nd
+                #print('second offset', offset)
+            print('shape ilp in get_pp_nl_atomic', numpy.shape(ilp))
+            # indices: i,j - hlblock (3 total. TODO why?), l - ang.momentum qnumber,
+            # p,q - sph.harm. projectors TODO?
+            print('hl before einsum in get_pp_nl_atomic', hl)
+            # to be able to contract without summing over atoms, ppnl_half need to be xilp or similar (x:atom dim)
+            ppnl[k] += numpy.einsum('ilp,ij,jlq->pq', ilp.conj(), hl, ilp)
+            ppnl1[k,atm_id_hl] += numpy.einsum('ilp,ij,jlq->pq', ilp.conj(), hl, ilp)
+            print('ppnl', numpy.shape(ppnl) )
+    
+    if abs(kpts_lst).sum() < 1e-9:  # gamma_point:
+        ppnl = ppnl.real
+        ppnl1 = ppnl1.real
+
+    if kpts is None or numpy.shape(kpts) == (3,):
+        ppnl = ppnl[0]
+        ppnl1 = ppnl1[0]
+    return ppnl, ppnl1
+
+def _int_vnl_atomic(cell, fakecell, hl_blocks, kpts):
+    '''Vnuc - Vloc'''
+    rcut = max(cell.rcut, fakecell.rcut)
+    Ls = cell.get_lattice_Ls(rcut=rcut)
+    nimgs = len(Ls)
+    expkL = numpy.asarray(numpy.exp(1j*numpy.dot(kpts, Ls.T)), order='C')
+    nkpts = len(kpts)
+
+    fill = getattr(libpbc, 'PBCnr2c_fill_ks1')
+    intopt = lib.c_null_ptr()
+    # intopt some class in pycsf
+    print('intopt in _int_vnl_atomic', type(intopt))
+
+    # TODO stopped here for summing in ppnl need atom dim., ppnl_half need to have it
+    def int_ket(_bas, intor):
+        if len(_bas) == 0:
+            return []
+        # str for which int to get
+        intor = cell._add_suffix(intor)
+        # i think evt one needs:
+        #1-electron integrals from two cells like
+        #\langle \mu | intor | \nu \rangle, \mu \in cell1, \nu \in cell2
+        # so between real & fakecell (orbitals in cell & sph harm in fakecell to make the orbs ~orth to core shells 
+        # represented by pp/cancel out the parts of orbs that are not there due to pp)?
+        # 
+        print('int_ket intor in _int_vnl_atomic/int_ket', type(intor) )
+        print('intor in _int_vnl_atomic/int_ket', intor )
+        atm, bas, env = gto.conc_env(cell._atm, cell._bas, cell._env,
+                                     fakecell._atm, _bas, fakecell._env)
+        atm = numpy.asarray(atm, dtype=numpy.int32)
+        bas = numpy.asarray(bas, dtype=numpy.int32)
+        env = numpy.asarray(env, dtype=numpy.double)
+        natm = len(atm)
+        # 2*natm in cell, fakecell 
+        print('natm in _int_vnl_atomic/int_ket', natm)
+        nbas = len(bas)
+        #bas : int32 ndarray, libcint integral function argument
+        # nbas: nr of shells. So the slice is nr of shells in cell, nr of shells in concatenated
+        # cell+fakecell, 0, nr of shells in cell 
+        # e.g. diam.prim.: [4, 6, 0, 4] 
+        shls_slice = (cell.nbas, nbas, 0, cell.nbas)
+        print('shls_slice _int_vnl_atomic/int_ket', shls_slice)
+        print('shls_slice[1] _int_vnl_atomic/int_ket', shls_slice[1])
+        print('shls_slice[2] _int_vnl_atomic/int_ket', shls_slice[2])
+        print('shls_slice[3] _int_vnl_atomic/int_ket', shls_slice[3])
+        print('shls_slice[0] _int_vnl_atomic/int_ket', shls_slice[0])
+        # TODO a bit lost here.. but i guess the ints picked her give info which integrals
+        # to compute in this concatenated system..?
+        ao_loc = gto.moleintor.make_loc(bas, intor)
+        print('ao_loc in _int_vnl_atomic/int_ket ', type(ao_loc), numpy.shape(ao_loc) )
+        print('ao_loc in _int_vnl_atomic/int_ket ', ao_loc)
+        ni = ao_loc[shls_slice[1]] - ao_loc[shls_slice[0]]
+        nj = ao_loc[shls_slice[3]] - ao_loc[shls_slice[2]]
+        print('ni nj in _int_vnl_atomic/int_ket ', numpy.shape(ni), numpy.shape(nj) )
+        print('ni nj in _int_vnl_atomic/int_ket ', ni, nj )
+        # 
+        # since for diam.prim. ni=2=n_atm=n_ang.moms, nj=8=n_aos
+        # i probably need to make sure i get it back like this from drv, too
+        out = numpy.empty((nkpts,ni,nj), dtype=numpy.complex128)
+        comp = 1
+
+        fintor = getattr(gto.moleintor.libcgto, intor)
+        # fintor is function for these ints? <class 'ctypes.CDLL.__init__.<locals>._FuncPtr'>
+        print('in _int_vnl_atomic/int_ket fintor:', type(fintor))
+
+        drv = libpbc.PBCnr2c_drv
+        drv(fintor, fill, out.ctypes.data_as(ctypes.c_void_p),
+            ctypes.c_int(nkpts), ctypes.c_int(comp), ctypes.c_int(nimgs),
+            Ls.ctypes.data_as(ctypes.c_void_p),
+            expkL.ctypes.data_as(ctypes.c_void_p),
+            (ctypes.c_int*4)(*(shls_slice[:4])),
+            ao_loc.ctypes.data_as(ctypes.c_void_p), intopt, lib.c_null_ptr(),
+            atm.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(natm),
+            bas.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(nbas),
+            env.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(env.size))
+        print('out returned by _int_vnl_atomic/int_ket ', numpy.shape(out) )
+        return out
+    
+    # extract how many nl proj. coeff. are there for each atom in fakecell
+    hl_dims = numpy.asarray([len(hl) for hl in hl_blocks])
+    print('hl_blocks, hl_dims in _int_vnl_atomic')
+    print(hl_blocks)
+    print(hl_dims)
+    print('hl_dims in _int_vnl_atomic >0, >1, >2')
+    # _bas: [atom-id,angular-momentum,num-primitive-GTO,num-contracted-GTO,0,ptr-of-exps,
+    # each element reperesents one shell
+    # e.g. diam. prim.fakecell: two lists,  [at_id=0 or 1, ang.mom.=0, nr.primGTOs=1, num.contr.GTOs=1,
+    # 0, ptr-of-exp=6 or 8, ptr.contract.coeff=7 or 9, ..=0 ] 
+    print('in _int_vnl_atomic, fakecell._bas',fakecell._bas )
+    print(' in _int_vnl_atomic fakecell._bas[hl_dims>0]', fakecell._bas[hl_dims>0])
+    print(' in _int_vnl_atomic fakecell._bas[hl_dims>1]', fakecell._bas[hl_dims>1])
+    print(' in _int_vnl_atomic fakecell._bas[hl_dims>2]', fakecell._bas[hl_dims>2])
+    # each element in tuple out is ... computed for one shell, l qnr
+    out = (int_ket(fakecell._bas[hl_dims>0], 'int1e_ovlp'),
+           int_ket(fakecell._bas[hl_dims>1], 'int1e_r2_origi'),
+           int_ket(fakecell._bas[hl_dims>2], 'int1e_r4_origi'))
+    print('out returned by int_vnl_atomic ', numpy.shape(out) )
+    print('print out[0] in by int_vnl_atomic', numpy.shape(out[0]), out[0])
+    print('print out[1] in by int_vnl_atomic', out[1])
+    print('print out[2] in by int_vnl_atomic', out[2])
+    return out
+
+##### TODO rm my funcs
 
 def fake_cell_vloc(cell, cn=0):
     '''Generate fake cell for V_{loc}.
@@ -244,6 +535,19 @@ def fake_cell_vnl(cell):
 
     gaussian function p_i^l Y_{lm}
     '''
+    # TODO in (nl, rl, hl) hl is the proj part hproj
+    '''{ atom: ( (nelec_s, nele_p, nelec_d, ...),
+                rloc, nexp, (cexp_1, cexp_2, ..., cexp_nexp),
+                nproj_types,
+                (r1, nproj1, ( (hproj1[1,1], hproj1[1,2], ..., hproj1[1,nproj1]),
+                               (hproj1[2,1], hproj1[2,2], ..., hproj1[2,nproj1]),
+                               ...
+                               (hproj1[nproj1,1], hproj1[nproj1,2], ...        ) )),
+                (r2, nproj2, ( (hproj2[1,1], hproj2[1,2], ..., hproj2[1,nproj1]),
+                ... ) )
+                )
+        ... }]i
+    '''
     fake_env = [cell.atom_coords().ravel()]
     fake_atm = cell._atm.copy()
     fake_atm[:,gto.PTR_COORD] = numpy.arange(0, cell.natm*3, 3)
@@ -252,13 +556,18 @@ def fake_cell_vnl(cell):
     hl_blocks = []
     for ia in range(cell.natm):
         if cell.atom_charge(ia) == 0:  # pass ghost atoms
+            #print('in fake_cell_vnl: ghost atomed passed..')
             continue
 
         symb = cell.atom_symbol(ia)
+        #print('in fake_cell_vnl: ia(#atm), atm symbol', ia, symb)
         if symb in cell._pseudo:
+            #print('in fake_cell_vnl: symb was in cell._psuedo')
             pp = cell._pseudo[symb]
+            #print('in fake_cell_vnl: pp from cell._pseudo', type(pp), numpy.shape(pp), pp)
             # nproj_types = pp[4]
             for l, (rl, nl, hl) in enumerate(pp[5:]):
+                #print('in fake_cell_vnl: l, (rl, nl, hl) ', l, (rl, nl, hl) )
                 if nl > 0:
                     alpha = .5 / rl**2
                     norm = gto.gto_norm(l, alpha)
@@ -275,7 +584,9 @@ def fake_cell_vnl(cell):
 #      r_l^{l+(4i-1)/2} sqrt(Gamma(l+(4i-1)/2))     sqrt(Gamma(l+2i-1/2)) r_l^{2i-2}
 #
                     fac = numpy.array([_PLI_FAC[l,i]/rl**(i*2) for i in range(nl)])
+                    #print('in fake_cell_vnl: fac', fac)
                     hl = numpy.einsum('i,ij,j->ij', fac, numpy.asarray(hl), fac)
+                    #print('in fake_cell_vnl: hl contracted with fac', hl)
                     hl_blocks.append(hl)
                     ptr += 2
 

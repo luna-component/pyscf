@@ -234,7 +234,9 @@ def get_pp(cell, kpt=np.zeros(3)):
     aoR = cell.pbc_eval_gto('GTOval', coords, kpt=kpt)
     nao = cell.nao_nr()
 
+    # SI is natm_
     SI = cell.get_SI()
+    # vlocG should return natm x ngrids array
     vlocG = get_vlocG(cell)
     vpplocG = -np.sum(SI * vlocG, axis=0)
     vpplocG[0] = np.sum(get_alphas(cell)) # from get_jvloc_G0 function

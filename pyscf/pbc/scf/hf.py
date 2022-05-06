@@ -588,6 +588,21 @@ class SCF(mol_hf.SCF):
             nuc += ecp.ecp_int(cell, kpt)
         return nuc + cell.pbc_intor('int1e_kin', 1, 1, kpt)
 
+    def get_nuc_att(self, cell=None, kpt=None):
+        '''Get the bare periodic nuc-el AO matrix, with G=0 removed.
+           (Full and atomwise)
+        See Martin (12.16)-(12.21).
+        '''
+        if cell is None: cell = self.cell
+        if kpt is None: kpt = self.kpt
+        if cell.pseudo:
+            nuc = self.with_df.get_pp(kpt)
+            nuc_atomic = self.with_df.get_pp_atomic(kpt)
+        else:
+            nuc = self.with_df.get_nuc(kpt)
+            nuc_atomic = self.with_df.get_nuc_atomic(kpt)
+        return nuc, nuc_atomic
+
     def get_ovlp(self, cell=None, kpt=None):
         if cell is None: cell = self.cell
         if kpt is None: kpt = self.kpt

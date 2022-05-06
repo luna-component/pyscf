@@ -156,6 +156,7 @@ def get_pp_loc_part1(mydf, kpts=None):
         vG = vpplocG
         # nao_pairs i<=j upper triangular fx, incl diagonal
         vj = numpy.zeros((nkpts,nao_pair), dtype=numpy.complex128)
+        #vj1 = numpy.zeros((nkpts,nat,nao_pair), dtype=numpy.complex128)
 
     else:
         if cell.dimension > 0:
@@ -174,41 +175,77 @@ def get_pp_loc_part1(mydf, kpts=None):
 
         nuccell = _compensate_nuccell(mydf)
         # PP-loc part1 is handled by fakenuc in _int_nuc_vloc
+        # TODO why lib.asarray? without also returned as array..
         vj = lib.asarray(mydf._int_nuc_vloc(nuccell, kpts_lst))
+        vj1 = lib.asarray(mydf._int_nuc_vloc_atomic(nuccell, kpts_lst))
+        #print('same vj vj1 sum_ ', numpy.allclose(vj, numpy.einsum('kxz->kx', vj1)) )
+        #print('same vj vj1 sum_ ', numpy.allclose(vj, numpy.einsum('kzx->kx', vj1)) )
+        #vj1 = lib.asarray(mydf._int_nuc_vloc_atomic(nuccell, kpts_lst))
+        #print('SHAPE VJ, kpts, VJ1  ', numpy.shape(vj), kpts_lst , numpy.shape(vj1) )
         t0 = t1 = log.timer_debug1('vnuc pass1: analytic int', *t0)
 
         coulG = tools.get_coulG(cell, kpt_allow, mesh=mesh, Gv=Gv) * kws
         aoaux = ft_ao.ft_ao(nuccell, Gv)
         vG = numpy.einsum('i,xi->x', -charges, aoaux) * coulG
+        vG1 = numpy.einsum('i,xi->xi', -charges, aoaux)        
+        vG11 = numpy.einsum('x,xi->xi', coulG, vG1)        
+        #print('SHAPE aoaux, VG, VG11  ', numpy.shape(aoaux), numpy.shape(vG), numpy.shape(vG11) )
+        #print(numpy.allclose(vG,numpy.einsum('xi->x', vG11)) )
 
     max_memory = max(2000, mydf.max_memory-lib.current_memory()[0])
     for aoaoks, p0, p1 in mydf.ft_loop(mesh, kpt_allow, kpts_lst,
                                        max_memory=max_memory, aosym='s2'):
         # aoaoks for each ao
         for k, aoao in enumerate(aoaoks):
+            #print('aoaoks, k', k, numpy.shape(aoaoks) )
+            # rho_ij(G) nuc(-G) / G^2
+            # = [Re(rho_ij(G)) + Im(rho_ij(G))*1j] [Re(nuc(G)) - Im(nuc(G))*1j] / G^2
             if gamma_point(kpts_lst[k]):
             # contract potential on grid points with value of the ao on that grid point (column in aoao is ao*ao value on a grid)
             # x is ao pair index (maps to specific ij pair) in triangular matrix
             # logically each vj[k] is a matrix
+            # vj1[k] choose matrx for k; ji,jx->ix where i is n_at, j is gridpoint index
                 vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].real, aoao.real)
                 vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].imag, aoao.imag)
+                vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].real, aoao.real)
+                vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].imag, aoao.imag)
             else:
                 vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].conj(), aoao)
+                vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].conj(), aoao)
         t1 = log.timer_debug1('contracting Vnuc [%s:%s]'%(p0, p1), *t1)
     log.timer_debug1('contracting Vnuc', *t0)
+    #print('vj, vj1 shapes after contracting  ', numpy.shape(vj), numpy.shape(vj1), numpy.allclose(vj, numpy.einsum('kix->kx', vj1))  )
     
     # now have the triangular matrix for each k (triangular of nao x nao is n_aopairs)
     # unpack here to nao x nao
     vj_kpts = []
+    vj1_kpts = []
     for k, kpt in enumerate(kpts_lst):
         if gamma_point(kpt):
             vj_kpts.append(lib.unpack_tril(vj[k].real.copy()))
+            vj1_1at_kpts = []
+            for i in range(len(charges)):
+                vj1_1at_kpts.append(lib.unpack_tril(vj1[k,i,:].real.copy()))
+            #print('vjkikpts list before/after unpacking', numpy.shape(vj1[k]), numpy.shape(vj1_1at_kpts) )
+                print('Atom no. = {}, vj1 integrals: '.format(i))
+                print(lib.unpack_tril(vj1[k,i,:].real.copy()))
+            vj1_kpts.append(vj1_1at_kpts)
+            #print('vj1 k list of matrices before/after unpacking ', numpy.shape(vj1[k]), numpy.shape(vj1_kpts) )
         else:
             vj_kpts.append(lib.unpack_tril(vj[k]))
+            vj1_1at_kpts = []
+            for i in range(len(charges)):
+                vj1_1at_kpts.append(lib.unpack_tril(vj1[k,i,:]))
+            vj1_kpts.append(vj1_1at_kpts)
+    #print('total vjkpts', type(vj_kpts), numpy.shape(vj_kpts) )
+    #print('total vj1 kpts', type(vj1_kpts), numpy.shape(vj1_kpts) ) 
 
     if kpts is None or numpy.shape(kpts) == (3,):
         # when only gamma point, the n_k x nao x nao tensor -> nao x nao matrix 
         vj_kpts = vj_kpts[0]
+        vj1_kpts = vj1_kpts[0]
+    print('Final checkpoint')
+    print('vj vs sum(vj1) kpts ', numpy.allclose(numpy.asarray(vj_kpts), numpy.asarray(numpy.einsum('ilm->lm', vj1_kpts))) )
     return numpy.asarray(vj_kpts)
 
 def _int_nuc_vloc(mydf, nuccell, kpts, intor='int3c2e', aosym='s2', comp=1):
@@ -286,7 +323,6 @@ def get_pp_loc_part1_atomic(mydf, kpts=None):
     charges = cell.atom_charges()
 
     kpt_allow = numpy.zeros(3)
-    # FIXME implement atomwise ints for eta=0
     if mydf.eta == 0:
         if cell.dimension > 0:
             ke_guess = estimate_ke_cutoff(cell, cell.precision)
@@ -324,18 +360,20 @@ def get_pp_loc_part1_atomic(mydf, kpts=None):
         nuccell = _compensate_nuccell(mydf)
         # PP-loc part1 is handled by fakenuc in _int_nuc_vloc
         # TODO why lib.asarray? without also returned as array..
+        vj = lib.asarray(mydf._int_nuc_vloc(nuccell, kpts_lst))
         vj1 = lib.asarray(mydf._int_nuc_vloc_atomic(nuccell, kpts_lst))
         #print('same vj vj1 sum_ ', numpy.allclose(vj, numpy.einsum('kxz->kx', vj1)) )
         #print('same vj vj1 sum_ ', numpy.allclose(vj, numpy.einsum('kzx->kx', vj1)) )
         #vj1 = lib.asarray(mydf._int_nuc_vloc_atomic(nuccell, kpts_lst))
         #print('SHAPE VJ, kpts, VJ1  ', numpy.shape(vj), kpts_lst , numpy.shape(vj1) )
-        t0 = t1 = log.timer_debug1('vnuc_at pass1: analytic int', *t0)
+        t0 = t1 = log.timer_debug1('vnuc pass1: analytic int', *t0)
 
         coulG = tools.get_coulG(cell, kpt_allow, mesh=mesh, Gv=Gv) * kws
         aoaux = ft_ao.ft_ao(nuccell, Gv)
+        vG = numpy.einsum('i,xi->x', -charges, aoaux) * coulG
         vG1 = numpy.einsum('i,xi->xi', -charges, aoaux)        
         vG11 = numpy.einsum('x,xi->xi', coulG, vG1)        
-        #print('SHAPE aoaux, VG (naopairs,nat), VG11  ', numpy.shape(aoaux), numpy.shape(vG1), numpy.shape(vG11) )
+        #print('SHAPE aoaux, VG, VG11  ', numpy.shape(aoaux), numpy.shape(vG), numpy.shape(vG11) )
         #print(numpy.allclose(vG,numpy.einsum('xi->x', vG11)) )
 
     max_memory = max(2000, mydf.max_memory-lib.current_memory()[0])
@@ -351,9 +389,12 @@ def get_pp_loc_part1_atomic(mydf, kpts=None):
             # x is ao pair index (maps to specific ij pair) in triangular matrix
             # logically each vj[k] is a matrix
             # vj1[k] choose matrx for k; ji,jx->ix where i is n_at, j is gridpoint index
+                vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].real, aoao.real)
+                vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].imag, aoao.imag)
                 vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].real, aoao.real)
                 vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].imag, aoao.imag)
             else:
+                vj[k] += numpy.einsum('k,kx->x', vG[p0:p1].conj(), aoao)
                 vj1[k] += numpy.einsum('ji,jx->ix', vG11[p0:p1].conj(), aoao)
         t1 = log.timer_debug1('contracting Vnuc [%s:%s]'%(p0, p1), *t1)
     log.timer_debug1('contracting Vnuc', *t0)
@@ -361,18 +402,21 @@ def get_pp_loc_part1_atomic(mydf, kpts=None):
     
     # now have the triangular matrix for each k (triangular of nao x nao is n_aopairs)
     # unpack here to nao x nao
+    vj_kpts = []
     vj1_kpts = []
     for k, kpt in enumerate(kpts_lst):
         if gamma_point(kpt):
+            vj_kpts.append(lib.unpack_tril(vj[k].real.copy()))
             vj1_1at_kpts = []
             for i in range(len(charges)):
                 vj1_1at_kpts.append(lib.unpack_tril(vj1[k,i,:].real.copy()))
             #print('vjkikpts list before/after unpacking', numpy.shape(vj1[k]), numpy.shape(vj1_1at_kpts) )
-                #print('Atom no. = {}, vj1 integrals: '.format(i))
-                #print(lib.unpack_tril(vj1[k,i,:].real.copy()))
+                print('Atom no. = {}, vj1 integrals: '.format(i))
+                print(lib.unpack_tril(vj1[k,i,:].real.copy()))
             vj1_kpts.append(vj1_1at_kpts)
             #print('vj1 k list of matrices before/after unpacking ', numpy.shape(vj1[k]), numpy.shape(vj1_kpts) )
         else:
+            vj_kpts.append(lib.unpack_tril(vj[k]))
             vj1_1at_kpts = []
             for i in range(len(charges)):
                 vj1_1at_kpts.append(lib.unpack_tril(vj1[k,i,:]))
@@ -382,10 +426,11 @@ def get_pp_loc_part1_atomic(mydf, kpts=None):
 
     if kpts is None or numpy.shape(kpts) == (3,):
         # when only gamma point, the n_k x nao x nao tensor -> nao x nao matrix 
+        vj_kpts = vj_kpts[0]
         vj1_kpts = vj1_kpts[0]
-    #print('Final checkpoint')
-    #print('vj vs sum(vj1) kpts ', numpy.allclose(numpy.asarray(vj_kpts), numpy.asarray(numpy.einsum('ilm->lm', vj1_kpts))) )
-    return numpy.asarray(vj1_kpts)
+    print('Final checkpoint')
+    print('vj vs sum(vj1) kpts ', numpy.allclose(numpy.asarray(vj_kpts), numpy.asarray(numpy.einsum('ilm->lm', vj1_kpts))) )
+    return numpy.asarray(vj_kpts)
 
 
 def _int_nuc_vloc_atomic(mydf, nuccell, kpts, intor='int3c2e', aosym='s2', comp=1):
@@ -414,12 +459,14 @@ def _int_nuc_vloc_atomic(mydf, nuccell, kpts, intor='int3c2e', aosym='s2', comp=
         nao_pair = nao*(nao+1)//2
     if comp == 1:
         buf = buf.reshape(nkpts,nao_pair,nchg)
+        mat = numpy.einsum('kxz,z->kx', buf, charge)
         #mat1 = numpy.einsum('kxz,z->kxz', buf, charge)
         #mat11 = mat1[:,:,nchg1:] + mat1[:,:,:nchg1]
         mat1 = numpy.einsum('kxz,z->kzx', buf, charge)
         mat11 = mat1[:,nchg1:,:] + mat1[:,:nchg1,:]
     else:
         buf = buf.reshape(nkpts,comp,nao_pair,nchg)
+        mat = numpy.einsum('kcxz,z->kcx', buf, charge)
         #mat1 = numpy.einsum('kcxz,z->kcxz', buf, charge)
         mat1 = numpy.einsum('kczx,z->kczx', buf, charge)
         #mat11 = mat1[:,:,:,nchg1:] + mat1[:,:,:,:nchg1]
@@ -437,63 +484,20 @@ def _int_nuc_vloc_atomic(mydf, nuccell, kpts, intor='int3c2e', aosym='s2', comp=
         nucbar = numpy.asarray([z/nuccell.bas_exp(i)[0] for i,z in enumerate(charge)])
         #print('bas_exp ', [nuccell.bas_exp(i)[0] for i in range(len(charge))] )
         #print('nucbar ', nucbar)
+        #nucbar = sum([z/nuccell.bas_exp(i)[0] for i,z in enumerate(charge)])
         nucbar *= numpy.pi/cell.vol
 
         ovlp = cell.pbc_intor('int1e_ovlp', 1, lib.HERMITIAN, kpts)
         for k in range(nkpts):
             if aosym == 's1':
                 mat[k] -= nucbar * ovlp[k].reshape(nao_pair)
-                for i in range(len(charge)):
-                    #mat11[k,:,i] -= nucbar[i] * ovlp[k].reshape(nao_pair)
-                    mat11[k,i,:] -= nucbar[i] * ovlp[k].reshape(nao_pair)
             else:
+                #mat[k] -= nucbar * lib.pack_tril(ovlp[k])
+                #mat11[k] -= numpy.asarray( [n*lib.pack_tril(ovlp[k]) for i,n in enumerate(nucbar)] )
                 for i in range(len(charge)):
                     #mat11[k,:,i] -= nucbar[i] * lib.pack_tril(ovlp[k])
                     mat11[k,i,:] -= nucbar[i] * lib.pack_tril(ovlp[k])
     return mat11
-
-def get_pp_atomic(mydf, kpts=None):
-    '''Get the periodic pseudotential nuc-el AO matrix, with G=0 removed.
-    '''
-    t0 = (logger.process_clock(), logger.perf_counter())
-    cell = mydf.cell
-    if kpts is None:
-        kpts_lst = numpy.zeros((1,3))
-    else:
-        kpts_lst = numpy.reshape(kpts, (-1,3))
-    nkpts = len(kpts_lst)
-
-    vloc1 = get_pp_loc_part1(mydf, kpts_lst)
-    vloc11 = get_pp_loc_part1_atomic(mydf, kpts_lst)
-    # vloc1 is probably the electron-nucc part in calc. with pseudopotential
-    print('vloc1 and vloc11 allclose?', numpy.allclose(vloc1, numpy.einsum('kiab->kab', vloc11)) )
-    print()
-    print('vloc1, vloc11 in get_pp_atomic', numpy.shape(vloc1), numpy.shape(vloc11) ) 
-    print()
-    t1 = logger.timer_debug1(mydf, 'get_pp_loc_part1', *t0)
-    vloc2 = pseudo.pp_int.get_pp_loc_part2(cell, kpts_lst)
-    vloc22 = pseudo.pp_int.get_pp_loc_part2_atomic(cell, kpts_lst)
-    print('vloc2 and vloc22 allclose?', numpy.allclose(vloc2, numpy.einsum('kiab->kab', vloc22)) )
-    print()
-    print('vloc2 in get_pp_atomic', numpy.shape(vloc2)) 
-    print()
-    t1 = logger.timer_debug1(mydf, 'get_pp_loc_part2', *t1)
-    vpp, vpp0 = pseudo.pp_int.get_pp_nl_atomic(cell, kpts_lst)
-    print('vpp and vpp0 allclose?', numpy.allclose(vpp, numpy.einsum('kiab->kab', vpp0)) )
-    print()
-    print('vpp in get_pp_atomic', numpy.shape(vpp)) 
-    print()
-    for k in range(nkpts):
-        vpp[k] += vloc1[k] + vloc2[k]
-    t1 = logger.timer_debug1(mydf, 'get_pp_nl', *t1)
-
-    # never true
-    if kpts is None or numpy.shape(kpts) == (3,):
-        vpp = vpp[0]
-    logger.timer(mydf, 'get_pp', *t0)
-    return vpp
-
-
 # TODO my versions here
 
 def get_pp(mydf, kpts=None):
@@ -508,19 +512,10 @@ def get_pp(mydf, kpts=None):
     nkpts = len(kpts_lst)
 
     vloc1 = get_pp_loc_part1(mydf, kpts_lst)
-    print()
-    print('vloc1 in get_pp', numpy.shape(vloc1)) 
-    print()
     t1 = logger.timer_debug1(mydf, 'get_pp_loc_part1', *t0)
     vloc2 = pseudo.pp_int.get_pp_loc_part2(cell, kpts_lst)
-    print()
-    print('vloc2 in get_pp', numpy.shape(vloc2)) 
-    print()
     t1 = logger.timer_debug1(mydf, 'get_pp_loc_part2', *t1)
     vpp = pseudo.pp_int.get_pp_nl(cell, kpts_lst)
-    print()
-    print('vpp in get_pp', numpy.shape(vpp)) 
-    print()
     for k in range(nkpts):
         vpp[k] += vloc1[k] + vloc2[k]
     t1 = logger.timer_debug1(mydf, 'get_pp_nl', *t1)
@@ -747,9 +742,7 @@ class AFTDF(lib.StreamObject):
     _int_nuc_vloc = _int_nuc_vloc
     _int_nuc_vloc_atomic = _int_nuc_vloc_atomic
     get_nuc = get_nuc
-    get_nuc_atomic = get_nuc_atomic
     get_pp = get_pp
-    get_pp_atomic = get_pp_atomic
 
     # Note: Special exxdiv by default should not be used for an arbitrary
     # input density matrix. When the df object was used with the molecular

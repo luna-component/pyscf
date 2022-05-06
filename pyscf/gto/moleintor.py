@@ -777,7 +777,11 @@ def make_loc(bas, key):
         l = bas[:,ANG_OF]
         dims = (l+1)*(l+2)//2 * bas[:,NCTR_OF]
     elif 'sph' in key:
+        #print('make_loc bas', bas)
+        #print('make_loc ANG_OFF', ANG_OF)
+        #print('make_loc NCTR_OFF', NCTR_OF)
         dims = (bas[:,ANG_OF]*2+1) * bas[:,NCTR_OF]
+        #print('make_loc dims', dims)
     else:  # spinor
         l = bas[:,ANG_OF]
         k = bas[:,KAPPA_OF]
