@@ -199,20 +199,40 @@ def get_pp_loc_part2_atomic(cell, kpts=None):
     kptij_lst = numpy.hstack((kpts_lst,kpts_lst)).reshape(-1,2,3)
     buf = 0
     buf2 = 0
+    # loop over coefficients to generate: erf, C1, C2, C3, C4
     for cn in range(1, 5):
+        # fake cell for V_loc. Has the atoms but instead of basis funcs, they have coeff*gaussian 
+        # type func. (as in the eq.) sitting omn them (only atoms which have pp). 
+        # Later the cells are concatenated to compute overlaps between 
+        # basis funcs on the real cell & gaussians on fake cell ......
+        # (splitting the int into two ints to multiply)
+        #
+        # <X_P(r)| sum_A^Nat sum_i^3 sum_j^3 sum_m^(2l+1) Y_lm(r_A) p_lmi(r_A) h^l_i,j p_lmj(r'_A) Y*_lm(r'_A) |X_Q(r')>
+        # -> (Y_lm implici in p^lm)
+        # int X_P(r - R_P) p^lm_i(r - R_A) dr     :X_P actual basis func. that sits on atom P  
+        # \times h^A,lm_i,j                       :coeff for atom A, lm,ij
+        # int p^lm_j(r' - R_A) X(r' - R_Q) dr     :X_Q actual basis func. that sits on atom Q  
+        # A sums over all atoms since each might have a pp that needs projecting out core sph. harm.
         fakecell = fake_cell_vloc(cell, cn)
+        # if the atom in fake cell has projectors (instead of basis func), i.e. has pp 
         if fakecell.nbas > 0:
-            # ao values on a grid, right? TODO
+            # The int over V_{loc} can be transfered to the 3-center
+            # integrals, in which the aux. basis is given by the fake cell.
+            # 
             v = incore.aux_e2(cell, fakecell, intors[cn], aosym='s2', comp=1,
                               kptij_lst=kptij_lst)
-    #        print('      v        in part2', numpy.shape(v))
+            #atm_id_vloc = fakecell.bas_atom(ib)
+            print('!!!!!')
+            print('      intors       in part2', intors[cn])
+            print('      cn, v        in part2', cn, numpy.shape(v))
+            print('!!!!!')
             buf += numpy.einsum('...i->...', v)
             # FIXME this is only correct if all the atoms have pp and exact same nr C coeff. that are nonzero
             # i.e. same nr coeff.
             # preallocate size and shape of the array wanted and transfer things correctly
             # for each i transfers into the correct position of the output array
             buf2 += numpy.einsum('...i->i...', v)
-    #        print('      buf,buf2        in part2', numpy.shape(buf), numpy.shape(buf2) )
+            print('      buf,buf2        in part2', numpy.shape(buf), numpy.shape(buf2) )
 
     # if fakecell.nbas are all < 0, buf is 0 and we check for elements in the system 
     if isinstance(buf, int):
@@ -297,6 +317,15 @@ def get_pp_nl_atomic(cell, kpts=None):
     # p_i^l: Gaussian projectors; rela&recipr.space: projectors have a form of Gaussian x polyn.
     # hl_blocks: coeff. for nonlocal projectors.
     # i &j run up to 3 ..never larger atom cores than l=3 (d-orbs)
+    ## fake cell for V_nl. Has the atoms but instead of basis funcs, they have projectors 
+    ## sitting omn them (confirm). Later the cells are concatenated to compute overlaps between 
+    ## basis funcs on the real cell & proj. on fake cell (splitting the int into two ints to multiply)
+    ## <X_P(r)| sum_A^Nat sum_i^3 sum_j^3 sum_m^(2l+1) Y_lm(r_A) p_lmi(r_A) h^l_i,j p_lmj(r'_A) Y*_lm(r'_A) |X_Q(r')>
+    ## -> (Y_lm implici in p^lm)
+    ## int X_P(r - R_P) p^lm_i(r - R_A) dr     :X_P actual basis func. that sits on atom P  
+    ## \times h^A,lm_i,j                       :coeff for atom A, lm,ij
+    ## int p^lm_j(r' - R_A) X(r' - R_Q) dr     :X_Q actual basis func. that sits on atom Q  
+    ## A sums over all atoms since each might have a pp that needs projecting out core sph. harm.
     fakecell, hl_blocks = fake_cell_vnl(cell)
     #'''Vnuc - Vloc'''
     ppnl_half = _int_vnl(cell, fakecell, hl_blocks, kpts_lst)
