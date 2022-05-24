@@ -476,8 +476,10 @@ def get_pp_atomic(mydf, kpts=None):
     print('vloc2 and vloc22 allclose?', numpy.allclose(vloc2, numpy.einsum('kiab->kab', vloc22)) )
     print()
     print('vloc2 in get_pp_atomic', numpy.shape(vloc2)) 
+    print('vloc22 in get_pp_atomic', numpy.shape(vloc22)) 
     print()
     t1 = logger.timer_debug1(mydf, 'get_pp_loc_part2', *t1)
+    #vpp = pseudo.pp_int.get_pp_nl(cell, kpts_lst)
     vpp, vpp0 = pseudo.pp_int.get_pp_nl_atomic(cell, kpts_lst)
     print('vpp and vpp0 allclose?', numpy.allclose(vpp, numpy.einsum('kiab->kab', vpp0)) )
     print()
@@ -485,13 +487,16 @@ def get_pp_atomic(mydf, kpts=None):
     print()
     for k in range(nkpts):
         vpp[k] += vloc1[k] + vloc2[k]
+        vpp0[k] += vloc11[k] + vloc22[k]
     t1 = logger.timer_debug1(mydf, 'get_pp_nl', *t1)
 
     # never true
     if kpts is None or numpy.shape(kpts) == (3,):
         vpp = vpp[0]
+        vpp0 = vpp0[0]
+    print('Total vpp & vpp0, allclose?', numpy.allclose(vpp, numpy.einsum('iab->ab', vpp0)) )
     logger.timer(mydf, 'get_pp', *t0)
-    return vpp
+    return vpp0
 
 
 # TODO my versions here
