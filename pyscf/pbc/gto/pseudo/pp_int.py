@@ -185,46 +185,49 @@ def get_pp_nl(cell, kpts=None):
 def get_pp_loc_part2_atomic(cell, kpts=None):
     '''PRB, 58, 3641 Eq (1), integrals associated to C1, C2, C3, C4
     '''
+    '''
+        Fake cell created to "house" each coeff.*gaussian (on each atom that has it) 
+        for V_loc of pseudopotential (1 fakecell has max 1 gaussian per atom). 
+        Ergo different nr of coeff. ->diff. nr of ints to loop and sum over for diff. atoms
+        See: "Each term of V_{loc} (erf, C_1, C_2, C_3, C_4) is a gaussian type
+        function. The integral over V_{loc} can be transfered to the 3-center
+        integrals, in which the auxiliary basis is given by the fake cell."
+        Later the cell and fakecells are concatenated to compute 3c overlaps between 
+        basis funcs on the real cell & coeff*gaussians on fake cell?
+        TODO check if this is correct
+        <X_P(r)| sum_A^Nat [ -Z_Acore/r erf(r/sqrt(2)r_loc) + sum_i C_iA (r/r_loc)^(2i-2) ] |X_Q(r)>
+        -> 
+        int X_P(r - R_P)     :X_P actual basis func. that sits on atom P  ??
+        * Ci              :coeff for atom A, coeff nr i
+    '''
     from pyscf.pbc.df import incore
-    print('kpts in get_pp_loc_part2_atomic', kpts, type(kpts) )
+    #print('kpts in get_pp_loc_part2_atomic', kpts, type(kpts) )
     if kpts is None:
         kpts_lst = numpy.zeros((1,3))
     else:
         kpts_lst = numpy.reshape(kpts, (-1,3))
     nkpts = len(kpts_lst)
     natm = cell.natm
-    print('part2_atomic: atoms in cell', natm)
+    #print('part2_atomic: atoms in cell', natm)
 
     intors = ('int3c2e', 'int3c1e', 'int3c1e_r2_origk',
               'int3c1e_r4_origk', 'int3c1e_r6_origk')
     kptij_lst = numpy.hstack((kpts_lst,kpts_lst)).reshape(-1,2,3)
     # TODO check why 2 lists of kpts needed for incore.aux_e2
-    print('in pp part2 atomic, kptij_lst', kptij_lst)
+    #print('in pp part2 atomic, kptij_lst', kptij_lst)
     buf = 0
     buf2 = []
 
-    # loop over coefficients to generate: erf, C1, C2, C3, C4
-    #The kwarg cn indiciates which term to generate for the fake cell.
-    #If cn = 0, the erf term is generated.  C_1,..,C_4 are generated with cn = 1..4
+    # Loop over coefficients to generate: erf, C1, C2, C3, C4
+    # each coeff.-gaussian put in its own fakecell
+    # If cn = 0, the erf term is generated.  C_1,..,C_4 are generated with cn = 1..4
     for cn in range(1, 5):
-        # fake cell for V_loc. Has the atoms but instead of basis funcs, they have coeff*gaussian 
-        # type func. (as in the eq.) sitting on them (only atoms which have pp). 
-        # "Each term of V_{loc} (erf, C_1, C_2, C_3, C_4) is a gaussian type
-        # function. The integral over V_{loc} can be transfered to the 3-center
-        # integrals, in which the auxiliary basis is given by the fake cell."
-        # Later the cells are concatenated to compute overlaps between 
-        # basis funcs on the real cell & coeff*gaussians on fake cell?
-        # (splitting the int into two ints to multiply)?
-        # TODO check if this is correct
-        # <X_P(r)| sum_A^Nat [ -Z_Acore/r erf(r/sqrt(2)r_loc) + sum_i C_iA (r/r_loc)^(2i-2) ] |X_Q(r)>
-        # -> 
-        # int X_P(r - R_P)     :X_P actual basis func. that sits on atom P  ??
-        # \times Ci              :coeff for atom A, coeff nr i
         fakecell = fake_cell_vloc(cell, cn)
-        print('in part2_atomic: cn, natm and nbas in fakecell', cn , fakecell.natm, fakecell.nbas)
-        # if the atom in fake cell has pp 
+        #print('in part2_atomic: cn, natm and nbas in fakecell', cn , fakecell.natm, fakecell.nbas)
+        # If the atoms in fake cell have pp (and how many) TODO why nbas=nr shells?
         if fakecell.nbas > 0:
-            print('fakecell for cn=', cn, ' has nbas=', fakecell.nbas)
+            #print('fakecell for cn=', cn, ' has nbas=', fakecell.nbas)
+            # Make a list on which atoms the gaussians sit (for the current Ci coeff.)
             fakebas_atom_lst = []
             for i in range(fakecell.nbas):
                 #print('atom symbol', i, fakecell.atom_symbol(i))
@@ -234,25 +237,28 @@ def get_pp_loc_part2_atomic(cell, kpts=None):
                 #print('real cell atom coord i=',i,' gaussian sits on', cell.atom_coord(fakecell.bas_atom(i)))
                 fakebas_atom_lst.append(fakecell.bas_atom(i))
             fakebas_atom_ids = numpy.array(fakebas_atom_lst)
-            print('')
-            print('fakebas_atom_lst ', fakebas_atom_ids)
-            print('')
+            #print('')
+            #print('fakebas_atom_lst ', fakebas_atom_ids)
+            # 
+            #print('')
             # The int over V_{loc} can be transfered to the 3-center
             # integrals, in which the aux. basis is given by the fake cell.
-            # 
             v = incore.aux_e2(cell, fakecell, intors[cn], aosym='s2', comp=1,
                               kptij_lst=kptij_lst)
             # v is (naopairs, naux).TODO  where does nkptij dim go/sums over?
+            # TODO can naopair be assigned before the loop?
             buf_cn = numpy.zeros( (natm, numpy.shape(v)[0]) )
-            print('buf_cn', numpy.shape(buf_cn))
-            print('v', numpy.shape(v))
+            #print('buf_cn', numpy.shape(buf_cn))
+            #print('v', numpy.shape(v))
+            # Put the ints in the right places in the buffer (i.e. assign to the right atom)
             for i_aux, id_atm in enumerate(fakebas_atom_ids):
                 buf_cn[id_atm, :] = v[:,i_aux]
-            print('buf_cn', numpy.shape(buf_cn))
-            print('!!!!!')
-            print('      intors       in part2', intors[cn])
-            print('      cn, v        in part2', cn, numpy.shape(v))
-            print('!!!!!')
+            #print('buf_cn', numpy.shape(buf_cn))
+            #print('!!!!!')
+            #print('      intors       in part2', intors[cn])
+            #print('      cn, v        in part2', cn, numpy.shape(v))
+            #print('!!!!!')
+            # TODO is buf always the same shape, i.e. does not fail when in place addition is performed
             buf += numpy.einsum('...i->...', v)
             # FIXME this is only correct if all the atoms have pp and exact same nr C coeff. that are nonzero
             # i.e. same nr coeff.
@@ -260,14 +266,15 @@ def get_pp_loc_part2_atomic(cell, kpts=None):
             # for each i transfers into the correct position of the output array
             #buf2 += numpy.einsum('...i->i...', v)
             buf2.append(buf_cn) 
-            print('      buf,buf2        in part2', numpy.shape(buf), len(buf2) )
+            #print('      buf,buf2        in part2', numpy.shape(buf), len(buf2) )
         # need to check if nbas=0 for all cellselse:
         #    buf2 = 0
-    # TODO add up all ints for atoms
+    # Add up all ints for each atom. The buf2 is then (natm, naopairs)
     buf2 = numpy.sum(buf2, axis=0)
-    print('shape of buf2 after addition', numpy.shape(buf2))
+    #print('shape of buf2 after addition', numpy.shape(buf2))
     print('allclose buf & buf2 ', numpy.allclose(buf, numpy.einsum('ix->x', buf2)) )
-
+    
+    # TODO make this valid for my calc, too
     # if fakecell.nbas are all < 0, buf is 0 and we check for elements in the system 
     if isinstance(buf, int):
     #    print('  buf is int   ')

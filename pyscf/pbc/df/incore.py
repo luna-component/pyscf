@@ -81,10 +81,12 @@ def aux_e2(cell, auxcell_or_auxbasis, intor='int3c2e', aosym='s1', comp=None,
     kptj = kptij_lst[:,1]
     j_only = is_zero(kpti-kptj)
 
+    # packed symmetric matrix
     if j_only and aosym[:2] == 's2':
         assert(shls_slice[2] == 0)
         nao_pair = (ao_loc[shls_slice[1]]*(ao_loc[shls_slice[1]]+1)//2 -
                     ao_loc[shls_slice[0]]*(ao_loc[shls_slice[0]]+1)//2)
+    # rectangular matrix
     else:
         nao_pair = ni * nj
 

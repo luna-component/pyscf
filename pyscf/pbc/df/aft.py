@@ -463,38 +463,38 @@ def get_pp_atomic(mydf, kpts=None):
         kpts_lst = numpy.reshape(kpts, (-1,3))
     nkpts = len(kpts_lst)
 
-    vloc1 = get_pp_loc_part1(mydf, kpts_lst)
+    #vloc1 = get_pp_loc_part1(mydf, kpts_lst)
     vloc11 = get_pp_loc_part1_atomic(mydf, kpts_lst)
-    # vloc1 is probably the electron-nucc part in calc. with pseudopotential
-    print('vloc1 and vloc11 allclose?', numpy.allclose(vloc1, numpy.einsum('kiab->kab', vloc11)) )
-    print()
-    print('vloc1, vloc11 in get_pp_atomic', numpy.shape(vloc1), numpy.shape(vloc11) ) 
-    print()
+    # vloc1 is electron-nucc part in calc. with pseudopotential
+    #print('vloc1 and vloc11 allclose?', numpy.allclose(vloc1, numpy.einsum('kiab->kab', vloc11)) )
+    #print()
+    #print('vloc1, vloc11 in get_pp_atomic', numpy.shape(vloc1), numpy.shape(vloc11) ) 
+    #print()
     t1 = logger.timer_debug1(mydf, 'get_pp_loc_part1', *t0)
-    vloc2 = pseudo.pp_int.get_pp_loc_part2(cell, kpts_lst)
+    #vloc2 = pseudo.pp_int.get_pp_loc_part2(cell, kpts_lst)
     vloc22 = pseudo.pp_int.get_pp_loc_part2_atomic(cell, kpts_lst)
-    print('vloc2 and vloc22 allclose?', numpy.allclose(vloc2, numpy.einsum('kiab->kab', vloc22)) )
-    print()
-    print('vloc2 in get_pp_atomic', numpy.shape(vloc2)) 
-    print('vloc22 in get_pp_atomic', numpy.shape(vloc22)) 
-    print()
+    #print('vloc2 and vloc22 allclose?', numpy.allclose(vloc2, numpy.einsum('kiab->kab', vloc22)) )
+    #print()
+    #print('vloc2 in get_pp_atomic', numpy.shape(vloc2)) 
+    #print('vloc22 in get_pp_atomic', numpy.shape(vloc22)) 
+    #print()
     t1 = logger.timer_debug1(mydf, 'get_pp_loc_part2', *t1)
     #vpp = pseudo.pp_int.get_pp_nl(cell, kpts_lst)
     vpp, vpp0 = pseudo.pp_int.get_pp_nl_atomic(cell, kpts_lst)
-    print('vpp and vpp0 allclose?', numpy.allclose(vpp, numpy.einsum('kiab->kab', vpp0)) )
-    print()
-    print('vpp in get_pp_atomic', numpy.shape(vpp)) 
-    print()
+    #print('vpp and vpp0 allclose?', numpy.allclose(vpp, numpy.einsum('kiab->kab', vpp0)) )
+    #print()
+    #print('vpp in get_pp_atomic', numpy.shape(vpp)) 
+    #print()
     for k in range(nkpts):
-        vpp[k] += vloc1[k] + vloc2[k]
+        #vpp[k] += vloc1[k] + vloc2[k]
         vpp0[k] += vloc11[k] + vloc22[k]
     t1 = logger.timer_debug1(mydf, 'get_pp_nl', *t1)
 
     # never true
     if kpts is None or numpy.shape(kpts) == (3,):
-        vpp = vpp[0]
+        #vpp = vpp[0]
         vpp0 = vpp0[0]
-    print('Total vpp & vpp0, allclose?', numpy.allclose(vpp, numpy.einsum('iab->ab', vpp0)) )
+    #print('Total vpp & vpp0, allclose?', numpy.allclose(vpp, numpy.einsum('iab->ab', vpp0)) )
     logger.timer(mydf, 'get_pp', *t0)
     return vpp0
 
