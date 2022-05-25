@@ -182,7 +182,8 @@ def get_pp_nl(cell, kpts=None):
     return ppnl
 
 ##### TODO rm my funcs
-def get_pp_loc_part2_atomic(cell, kpts=None):
+# this is the alt version of get_pp_loc_part2_atomic
+def get_pp_loc_part2_atomic0(cell, kpts=None):
     '''PRB, 58, 3641 Eq (1), integrals associated to C1, C2, C3, C4
     '''
     '''
@@ -340,6 +341,160 @@ def get_pp_loc_part2_atomic(cell, kpts=None):
 #    print(numpy.allclose(vpploc, numpy.einsum('kiab->kab', vpploc2) ) )
     return vpploc2
 
+def get_pp_loc_part2_atomic(cell, kpts=None):
+    '''PRB, 58, 3641 Eq (1), integrals associated to C1, C2, C3, C4
+    '''
+    '''
+        Fake cell created to "house" each coeff.*gaussian (on each atom that has it) 
+        for V_loc of pseudopotential (1 fakecell has max 1 gaussian per atom). 
+        Ergo different nr of coeff. ->diff. nr of ints to loop and sum over for diff. atoms
+        See: "Each term of V_{loc} (erf, C_1, C_2, C_3, C_4) is a gaussian type
+        function. The integral over V_{loc} can be transfered to the 3-center
+        integrals, in which the auxiliary basis is given by the fake cell."
+        Later the cell and fakecells are concatenated to compute 3c overlaps between 
+        basis funcs on the real cell & coeff*gaussians on fake cell?
+        TODO check if this is correct
+        <X_P(r)| sum_A^Nat [ -Z_Acore/r erf(r/sqrt(2)r_loc) + sum_i C_iA (r/r_loc)^(2i-2) ] |X_Q(r)>
+        -> 
+        int X_P(r - R_P)     :X_P actual basis func. that sits on atom P  ??
+        * Ci              :coeff for atom A, coeff nr i
+    '''
+    from pyscf.pbc.df import incore
+    if kpts is None:
+        kpts_lst = numpy.zeros((1,3))
+    else:
+        kpts_lst = numpy.reshape(kpts, (-1,3))
+    nkpts = len(kpts_lst)
+    natm = cell.natm
+    nao = cell.nao_nr()
+    # nao_pairs for i<=j upper triangular fx, incl diagonal
+    nao_pair = nao * (nao+1) // 2
+
+    intors = ('int3c2e', 'int3c1e', 'int3c1e_r2_origk',
+              'int3c1e_r4_origk', 'int3c1e_r6_origk')
+    kptij_lst = numpy.hstack((kpts_lst,kpts_lst)).reshape(-1,2,3)
+    buf = 0
+
+    # Loop over coefficients to generate: erf, C1, C2, C3, C4
+    # each coeff.-gaussian put in its own fakecell
+    # If cn = 0, the erf term is generated.  C_1,..,C_4 are generated with cn = 1..4
+    buf2 = numpy.zeros((natm, nao_pair))
+    for cn in range(1, 5):
+        fakecell = fake_cell_vloc(cell, cn)
+        #print('in part2_atomic: cn, natm and nbas in fakecell', cn , fakecell.natm, fakecell.nbas)
+        # If the atoms in fake cell have pp (and how many) TODO why nbas=nr shells?
+        if fakecell.nbas > 0:
+            #print('fakecell for cn=', cn, ' has nbas=', fakecell.nbas)
+            # Make a list on which atoms the gaussians sit (for the current Ci coeff.)
+            fakebas_atom_lst = []
+            for i in range(fakecell.nbas):
+                #print('atom symbol', i, fakecell.atom_symbol(i))
+                #print('atom symbol real cell', i, cell.atom_symbol(i))
+                #print('atom id where i=',i,' gaussian sits on', fakecell.bas_atom(i))
+                #print('atom coord where i=',i,' gaussian sits on', fakecell.bas_coord(i))
+                #print('real cell atom coord i=',i,' gaussian sits on', cell.atom_coord(fakecell.bas_atom(i)))
+                fakebas_atom_lst.append(fakecell.bas_atom(i))
+            fakebas_atom_ids = numpy.array(fakebas_atom_lst)
+            #print('')
+            #print('fakebas_atom_lst ', fakebas_atom_ids)
+            # 
+            #print('')
+            # The int over V_{loc} can be transfered to the 3-center
+            # integrals, in which the aux. basis is given by the fake cell.
+            v = incore.aux_e2(cell, fakecell, intors[cn], aosym='s2', comp=1,
+                              kptij_lst=kptij_lst)
+            # v is (naopairs, naux).TODO  where does nkptij dim go/sums over?
+            # TODO can naopair be assigned before the loop?
+            #buf_cn = numpy.zeros( (natm, numpy.shape(v)[0]) )
+            #print('buf_cn', numpy.shape(buf_cn))
+            #print('v', numpy.shape(v))
+            # Put the ints for this Ci coeff. in the right places in the buffer (i.e. assign to the right atom)
+            #for i_aux, id_atm in enumerate(fakebas_atom_ids):
+            #    #buf_cn[id_atm, :] = v[:,i_aux]
+            #    buf2[id_atm, :] += v[:,i_aux]
+            v = numpy.einsum('ij->ji', v)
+            buf2[fakebas_atom_lst] += v
+            #print('buf_cn', numpy.shape(buf_cn))
+            #print('!!!!!')
+            #print('      intors       in part2', intors[cn])
+            #print('      cn, v        in part2', cn, numpy.shape(v))
+            #print('!!!!!')
+            # TODO is buf always the same shape, i.e. does not fail when in place addition is performed
+            # FIXME this is only correct if all the atoms have pp and exact same nr C coeff. that are nonzero
+            # i.e. same nr coeff.
+            # preallocate size and shape of the array wanted and transfer things correctly
+            # for each i transfers into the correct position of the output array
+            #buf2 += numpy.einsum('...i->i...', v)
+            #buf2.append(buf_cn) 
+            #print('      buf,buf2        in part2', numpy.shape(buf), len(buf2) )
+        # need to check if nbas=0 for all cellselse:
+        #    buf2 = 0
+    # Add up all ints for each atom. The buf2 is then (natm, naopairs)
+    #buf2 = numpy.sum(buf2, axis=0)
+    #print('shape of buf2 after addition', numpy.shape(buf2))
+    
+    # if fakecell.nbas are all < 0, buf consists of zeros and we check for elements in the system 
+    all_zeros = not numpy.any(buf2)
+    print('allzeros? ', all_zeros)
+    if all_zeros:
+        if any(cell.atom_symbol(ia) in cell._pseudo for ia in range(cell.natm)):
+            pass
+        else:
+            lib.logger.warn(cell, 'cell.pseudo was specified but its elements %s '
+                             'were not found in the system.', cell._pseudo.keys())
+        # list of zeros, length nkpts returned when no pp found on atoms
+        vpploc2 = [0] * nkpts
+    #    print('       vploc created as ', numpy.shape(vpploc) )
+    else:
+        buf2 = buf2.reshape(natm, nkpts,-1)
+        # indices: k-kpoint, i-atom, x-aopair
+        buf2 = numpy.einsum('ikx->kix', buf2)
+        #print('       buf, buf2 reshaped as ', numpy.shape(buf), numpy.shape(buf2) )
+        #vpploc = []
+        vpploc2 = []
+        # now have the triangular matrix for each k (triangular of nao x nao is n_aopairs)
+        # unpack here to nao x nao for each atom
+        for k, kpt in enumerate(kpts_lst):
+    #        print('   before unpacking buf[k]  ', numpy.shape(buf[k]) )
+            vpploc2_1at_kpts = []
+            #v = lib.unpack_tril(buf[k])
+            for i in range(natm):
+    #            print('   before unpacking buf2[k]  ', numpy.shape(buf2[k,i]) )
+                v2 = lib.unpack_tril(buf2[k,i,:])
+                if abs(kpt).sum() < 1e-9:  # gamma_point:
+                    v2 = v2.real
+                vpploc2_1at_kpts.append(v2)
+    #            print('   after unpacking buf2[k,i] to v[i]  ', numpy.shape(vpploc2_1at_kpts[i]))
+    #        print('   after unpacking buf[k] to v  ', numpy.shape(v))
+            #if abs(kpt).sum() < 1e-9:  # gamma_point:
+            #    v = v.real
+            #vpploc.append(v)
+            vpploc2.append(vpploc2_1at_kpts)
+    #        print('gamma point: vpploc appended v ', numpy.shape(vpploc) )
+    #        print('gamma point: vpploc2 appended v2 ', numpy.shape(vpploc2) )
+    #print('kpts', kpts, numpy.shape(kpts))
+    # when only gamma point, the n_k x nao x nao tensor -> nao x nao matrix 
+    if kpts is None or numpy.shape(kpts) == (3,):
+        print('went here')
+        #vpploc = vpploc[0]
+        vpploc2 = vpploc2[0]
+#        print('chosen vpploc[0]', numpy.shape(vpploc))
+#        print('chosen vpploc2[0]', numpy.shape(vpploc2))
+#        for k, kpt in enumerate(kpts_lst):
+#            print('   before unpacking buf[k]  ', numpy.shape(buf[k]))
+#            v = lib.unpack_tril(buf[k])
+#            print('   after unpacking buf[k] to v  ', numpy.shape(v))
+#            if abs(kpt).sum() < 1e-9:  # gamma_point:
+#                v = v.real
+#            vpploc.append(v)
+#            print('gamma point: vpploc appended v ', numpy.shape(vpploc) )
+#    if kpts is None or numpy.shape(kpts) == (3,):
+#        vpploc = vpploc[0]
+#        print('chosen vpploc[0]', numpy.shape(vpploc))
+#    print('is vpploc same as vpploc2?')
+#    print(numpy.shape(vpploc), numpy.shape(vpploc2))
+#    print(numpy.allclose(vpploc, numpy.einsum('kiab->kab', vpploc2) ) )
+    return vpploc2
 
 
 def get_pp_nl_atomic(cell, kpts=None):
