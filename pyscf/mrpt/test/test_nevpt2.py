@@ -23,36 +23,6 @@ from pyscf import mcscf
 from pyscf import fci
 from pyscf.mrpt import nevpt2
 
-mol = gto.Mole()
-mol.verbose = 5
-mol.output = '/dev/null' #None
-mol.atom = [
-    ['H', ( 0., 0.    , 0.    )],
-    ['H', ( 0., 0.    , 0.8   )],
-    ['H', ( 0., 0.    , 2.    )],
-    ['H', ( 0., 0.    , 2.8   )],
-    ['H', ( 0., 0.    , 4.    )],
-    ['H', ( 0., 0.    , 4.8   )],
-    ['H', ( 0., 0.    , 6.    )],
-    ['H', ( 0., 0.    , 6.8   )],
-    ['H', ( 0., 0.    , 8.    )],
-    ['H', ( 0., 0.    , 8.8   )],
-    ['H', ( 0., 0.    , 10.    )],
-    ['H', ( 0., 0.    , 10.8   )],
-    ['H', ( 0., 0.    , 12     )],
-    ['H', ( 0., 0.    , 12.8   )],
-]
-mol.basis = 'sto3g'
-mol.build()
-mf = scf.RHF(mol)
-mf.conv_tol = 1e-16
-mf.kernel()
-norb = 6
-nelec = 8
-mc = mcscf.CASCI(mf, norb, nelec)
-mc.fcisolver.conv_tol = 1e-15
-mc.kernel()
-mc.canonicalize_()
 
 def nevpt2_dms(mc):
     mo_cas = mf.mo_coeff[:,mc.ncore:mc.ncore+mc.ncas]
@@ -67,7 +37,40 @@ def nevpt2_dms(mc):
     eris = nevpt2._ERIS(mc, mc.mo_coeff, method='outcore')
     dms = {'1': dm1, '2': dm2, '3': dm3, '4': dm4}
     return eris, dms
-eris, dms = nevpt2_dms(mc)
+
+def setUpModule():
+    global mol, mf, mc, eris, dms, norb, nelec
+    mol = gto.Mole()
+    mol.verbose = 5
+    mol.output = '/dev/null' #None
+    mol.atom = [
+        ['H', ( 0., 0.    , 0.    )],
+        ['H', ( 0., 0.    , 0.8   )],
+        ['H', ( 0., 0.    , 2.    )],
+        ['H', ( 0., 0.    , 2.8   )],
+        ['H', ( 0., 0.    , 4.    )],
+        ['H', ( 0., 0.    , 4.8   )],
+        ['H', ( 0., 0.    , 6.    )],
+        ['H', ( 0., 0.    , 6.8   )],
+        ['H', ( 0., 0.    , 8.    )],
+        ['H', ( 0., 0.    , 8.8   )],
+        ['H', ( 0., 0.    , 10.    )],
+        ['H', ( 0., 0.    , 10.8   )],
+        ['H', ( 0., 0.    , 12     )],
+        ['H', ( 0., 0.    , 12.8   )],
+    ]
+    mol.basis = 'sto3g'
+    mol.build()
+    mf = scf.RHF(mol)
+    mf.conv_tol = 1e-16
+    mf.kernel()
+    norb = 6
+    nelec = 8
+    mc = mcscf.CASCI(mf, norb, nelec)
+    mc.fcisolver.conv_tol = 1e-15
+    mc.kernel()
+    mc.canonicalize_()
+    eris, dms = nevpt2_dms(mc)
 
 def tearDownModule():
     global mol, mf, mc, eris, dms
@@ -160,6 +163,41 @@ class KnownValues(unittest.TestCase):
         mc.kernel(mc.sort_mo(caslist))
         e = nevpt2.NEVPT(mc).kernel()
         self.assertAlmostEqual(e, -0.031179434919517, 6)
+
+    def test_multistate(self):
+        # See issue #1081
+        mol = gto.M(atom='''
+        O  0.0000000000 0.0000000000 -0.1302052882
+        H  1.4891244004 0.0000000000  1.0332262019
+        H -1.4891244004 0.0000000000  1.0332262019
+        ''',
+            basis = '631g',
+            symmetry = False)
+        mf = scf.RHF(mol).run()
+
+        mc = mcscf.CASSCF(mf, 6, [4,4])
+        mc.fcisolver=fci.solver(mol,singlet=True)
+        mc.fcisolver.nroots=2
+        mc = mcscf.state_average_(mc, [0.5,0.5])
+        mc.kernel()
+        orbital = mc.mo_coeff.copy()
+
+        mc = mcscf.CASCI(mf, 6, 8)
+        mc.fcisolver=fci.solver(mol,singlet=True)
+        mc.fcisolver.nroots=2
+        mc.kernel(orbital)
+        
+        # Ground State
+        mp0 = nevpt2.NEVPT(mc, root=0)
+        mp0.kernel()
+        e0 = mc.e_tot[0] + mp0.e_corr
+        self.assertAlmostEqual(e0, -75.867171, 4) # From ORCA (4.2.1)
+
+        # First Excited State
+        mp1 = nevpt2.NEVPT(mc, root=1)
+        mp1.kernel()
+        e1 = mc.e_tot[1] + mp1.e_corr
+        self.assertAlmostEqual(e1, -75.828469, 4) # From ORCA (4.2.1)
 
 
 if __name__ == "__main__":

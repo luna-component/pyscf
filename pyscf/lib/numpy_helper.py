@@ -157,6 +157,7 @@ def _contract(subscripts, *tensors, **kwargs):
     idxBt = list(idxB)
     inner_shape = 1
     insert_B_loc = 0
+    shared_idxAB = sorted(list(shared_idxAB))
     for n in shared_idxAB:
         if rangeA[n] != rangeB[n]:
             err = ('ERROR: In index string %s, the range of index %s is '
@@ -294,7 +295,7 @@ def pack_tril(mat, axis=-1, out=None):
         return out
 
     else:  # pack the leading two dimension
-        assert(axis == 0)
+        assert (axis == 0)
         out = mat[numpy.tril_indices(nd)]
         return out
 
@@ -363,7 +364,7 @@ def unpack_tril(tril, filltriu=HERMITIAN, axis=-1, out=None):
         return out
 
     else:  # unpack the leading dimension
-        assert(axis == 0)
+        assert (axis == 0)
         shape = (nd,nd) + tril.shape[1:]
         out = numpy.ndarray(shape, tril.dtype, buffer=out)
         idx = numpy.tril_indices(nd)
@@ -378,7 +379,7 @@ def unpack_tril(tril, filltriu=HERMITIAN, axis=-1, out=None):
         elif filltriu == SYMMETRIC:
             #:for ij,(i,j) in enumerate(zip(*idx)):
             #:    out[i,j] = out[j,i] = tril[ij]
-            idxy = numpy.empty((nd,nd), dtype=numpy.int)
+            idxy = numpy.empty((nd,nd), dtype=int)
             idxy[idx[0],idx[1]] = idxy[idx[1],idx[0]] = numpy.arange(nd*(nd+1)//2)
             numpy.take(tril, idxy, axis=0, out=out)
         else:
@@ -421,23 +422,23 @@ def hermi_triu(mat, hermi=HERMITIAN, inplace=True):
     '''Use the elements of the lower triangular part to fill the upper triangular part.
 
     Kwargs:
-        filltriu : int
+        hermi : int
 
             | 1 (default) return a hermitian matrix
             | 2           return an anti-hermitian matrix
 
     Examples:
 
-    >>> unpack_row(numpy.arange(9.).reshape(3,3), 1)
+    >>> hermi_triu(numpy.arange(9.).reshape(3,3), 1)
     [[ 0.  3.  6.]
      [ 3.  4.  7.]
      [ 6.  7.  8.]]
-    >>> unpack_row(numpy.arange(9.).reshape(3,3), 2)
+    >>> hermi_triu(numpy.arange(9.).reshape(3,3), 2)
     [[ 0. -3. -6.]
      [ 3.  4. -7.]
      [ 6.  7.  8.]]
     '''
-    assert(hermi == HERMITIAN or hermi == ANTIHERMI)
+    assert (hermi == HERMITIAN or hermi == ANTIHERMI)
     if not inplace:
         mat = mat.copy('A')
     if mat.flags.c_contiguous:
@@ -448,7 +449,7 @@ def hermi_triu(mat, hermi=HERMITIAN, inplace=True):
         raise NotImplementedError
 
     nd = mat.shape[0]
-    assert(mat.size == nd**2)
+    assert (mat.size == nd**2)
 
     if mat.dtype == numpy.double:
         fn = _np_helper.NPdsymm_triu
@@ -520,7 +521,7 @@ def takebak_2d(out, a, idx, idy, thread_safe=True):
      [ 0.  0.  0.]
      [ 1.  0.  1.]]
     '''
-    assert(out.flags.c_contiguous)
+    assert (out.flags.c_contiguous)
     a = numpy.asarray(a, order='C')
     if out.dtype != a.dtype:
         a = a.astype(out.dtype)
@@ -555,8 +556,8 @@ def transpose(a, axes=None, inplace=False, out=None):
      [ 1.  1.  1.]]
     '''
     if inplace:
-        arow, acol = a.shape
-        assert(arow == acol)
+        arow, acol = a.shape[:2]
+        assert arow == acol
         tmp = numpy.empty((BLOCK_DIM,BLOCK_DIM))
         for c0, c1 in misc.prange(0, acol, BLOCK_DIM):
             for r0, r1 in misc.prange(0, c0, BLOCK_DIM):
@@ -570,6 +571,9 @@ def transpose(a, axes=None, inplace=False, out=None):
     if (not a.flags.c_contiguous
         or (a.dtype != numpy.double and a.dtype != numpy.complex128)):
         if a.ndim == 2:
+            if a.flags.f_contiguous:
+                return a.T.copy()
+
             arow, acol = a.shape
             out = numpy.empty((acol,arow), a.dtype)
             r1 = c1 = 0
@@ -585,7 +589,7 @@ def transpose(a, axes=None, inplace=False, out=None):
             out[c1:acol,r1:arow] = a[r1:arow,c1:acol].T
             return out
         else:
-            return a.transpose(axes)
+            return numpy.asarray(a.transpose(axes), order='C')
 
     if a.ndim == 2:
         arow, acol = a.shape
@@ -598,7 +602,7 @@ def transpose(a, axes=None, inplace=False, out=None):
     else:
         raise NotImplementedError
 
-    assert(a.flags.c_contiguous)
+    assert (a.flags.c_contiguous)
     if a.dtype == numpy.double:
         fn = _np_helper.NPdtranspose_021
     else:
@@ -629,8 +633,10 @@ def hermi_sum(a, axes=None, hermi=HERMITIAN, inplace=False, out=None):
      [ 3.  6.]]
     '''
     if inplace:
+        assert isinstance(a, numpy.ndarray)
         out = a
     else:
+        a = numpy.asarray(a)
         out = numpy.ndarray(a.shape, a.dtype, buffer=out)
 
     if (not a.flags.c_contiguous
@@ -650,15 +656,15 @@ def hermi_sum(a, axes=None, hermi=HERMITIAN, inplace=False, out=None):
             raise NotImplementedError('input array is not C-contiguous')
 
     if a.ndim == 2:
-        assert(a.shape[0] == a.shape[1])
+        assert (a.shape[0] == a.shape[1])
         c_shape = (ctypes.c_int*3)(1, a.shape[0], a.shape[1])
     elif a.ndim == 3 and axes == (0,2,1):
-        assert(a.shape[1] == a.shape[2])
+        assert (a.shape[1] == a.shape[2])
         c_shape = (ctypes.c_int*3)(*(a.shape))
     else:
         raise NotImplementedError
 
-    assert(a.flags.c_contiguous)
+    assert (a.flags.c_contiguous)
     if a.dtype == numpy.double:
         fn = _np_helper.NPdsymm_021_sum
     else:
@@ -686,7 +692,7 @@ def ddot(a, b, alpha=1, c=None, beta=0):
         trans_a = 'N'
         #raise ValueError('a.flags: %s' % str(a.flags))
 
-    assert(k == b.shape[0])
+    assert (k == b.shape[0])
     if b.flags.c_contiguous:
         trans_b = 'N'
     elif b.flags.f_contiguous:
@@ -701,7 +707,7 @@ def ddot(a, b, alpha=1, c=None, beta=0):
         c = numpy.empty((m,n))
         beta = 0
     else:
-        assert(c.shape == (m,n))
+        assert (c.shape == (m,n))
 
     return _dgemm(trans_a, trans_b, m, n, k, a, b, c, alpha, beta)
 
@@ -719,7 +725,7 @@ def zdot(a, b, alpha=1, c=None, beta=0):
     else:
         raise ValueError('a.flags: %s' % str(a.flags))
 
-    assert(k == b.shape[0])
+    assert (k == b.shape[0])
     if b.flags.c_contiguous:
         trans_b = 'N'
     elif b.flags.f_contiguous:
@@ -732,9 +738,33 @@ def zdot(a, b, alpha=1, c=None, beta=0):
         beta = 0
         c = numpy.empty((m,n), dtype=numpy.complex128)
     else:
-        assert(c.shape == (m,n))
+        assert (c.shape == (m,n))
 
     return _zgemm(trans_a, trans_b, m, n, k, a, b, c, alpha, beta)
+
+def zdotNN(aR, aI, bR, bI, alpha=1, cR=None, cI=None, beta=0):
+    '''c = a*b'''
+    cR = ddot(aR, bR, alpha, cR, beta)
+    cR = ddot(aI, bI,-alpha, cR, 1   )
+    cI = ddot(aR, bI, alpha, cI, beta)
+    cI = ddot(aI, bR, alpha, cI, 1   )
+    return cR, cI
+
+def zdotCN(aR, aI, bR, bI, alpha=1, cR=None, cI=None, beta=0):
+    '''c = a.conj()*b'''
+    cR = ddot(aR, bR, alpha, cR, beta)
+    cR = ddot(aI, bI, alpha, cR, 1   )
+    cI = ddot(aR, bI, alpha, cI, beta)
+    cI = ddot(aI, bR,-alpha, cI, 1   )
+    return cR, cI
+
+def zdotNC(aR, aI, bR, bI, alpha=1, cR=None, cI=None, beta=0):
+    '''c = a*b.conj()'''
+    cR = ddot(aR, bR, alpha, cR, beta)
+    cR = ddot(aI, bI, alpha, cR, 1   )
+    cI = ddot(aR, bI,-alpha, cI, beta)
+    cI = ddot(aI, bR, alpha, cI, 1   )
+    return cR, cI
 
 def dot(a, b, alpha=1, c=None, beta=0):
     atype = a.dtype
@@ -810,9 +840,9 @@ def _dgemm(trans_a, trans_b, m, n, k, a, b, c, alpha=1, beta=0,
             c[:] *= beta
         return c
 
-    assert(a.flags.c_contiguous)
-    assert(b.flags.c_contiguous)
-    assert(c.flags.c_contiguous)
+    assert (a.flags.c_contiguous)
+    assert (b.flags.c_contiguous)
+    assert (c.flags.c_contiguous)
 
     _np_helper.NPdgemm(ctypes.c_char(trans_b.encode('ascii')),
                        ctypes.c_char(trans_a.encode('ascii')),
@@ -835,12 +865,12 @@ def _zgemm(trans_a, trans_b, m, n, k, a, b, c, alpha=1, beta=0,
             c[:] *= beta
         return c
 
-    assert(a.flags.c_contiguous)
-    assert(b.flags.c_contiguous)
-    assert(c.flags.c_contiguous)
-    assert(a.dtype == numpy.complex128)
-    assert(b.dtype == numpy.complex128)
-    assert(c.dtype == numpy.complex128)
+    assert (a.flags.c_contiguous)
+    assert (b.flags.c_contiguous)
+    assert (c.flags.c_contiguous)
+    assert (a.dtype == numpy.complex128)
+    assert (b.dtype == numpy.complex128)
+    assert (c.dtype == numpy.complex128)
 
     _np_helper.NPzgemm(ctypes.c_char(trans_b.encode('ascii')),
                        ctypes.c_char(trans_a.encode('ascii')),
@@ -896,7 +926,7 @@ if LooseVersion(numpy.__version__) <= LooseVersion('1.6.0'):
             return numpy.sqrt(xx.real)
 else:
     norm = numpy.linalg.norm
-del(LooseVersion)
+del (LooseVersion)
 
 def cond(x, p=None):
     '''Compute the condition number'''
@@ -985,7 +1015,7 @@ def direct_sum(subscripts, *operands):
 
         symbs = subscript[1:].replace('-', '+').split('+')
         #s = ''.join(symbs)
-        #assert(len(set(s)) == len(s))  # make sure no duplicated symbols
+        #assert (len(set(s)) == len(s))  # make sure no duplicated symbols
         return sign, symbs
 
     if '->' in subscripts:
@@ -995,11 +1025,11 @@ def direct_sum(subscripts, *operands):
     else:
         sign, src = sign_and_symbs(subscripts)
         dest = ''.join(src)
-    assert(len(src) == len(operands))
+    assert (len(src) == len(operands))
 
     for i, symb in enumerate(src):
         op = numpy.asarray(operands[i])
-        assert(len(symb) == op.ndim)
+        assert (len(symb) == op.ndim)
         unisymb = set(symb)
         if len(unisymb) != len(symb):
             unisymb = ''.join(unisymb)
@@ -1023,27 +1053,38 @@ def condense(opname, a, loc_x, loc_y=None):
     '''
     .. code-block:: python
 
-        for i,i0 in enumerate(loc_x):
+        for i,i0 in enumerate(loc_x[:-1]):
             i1 = loc_x[i+1]
-            for j,j0 in enumerate(loc_y):
+            for j,j0 in enumerate(loc_y[:-1]):
                 j1 = loc_y[j+1]
-                out[i,j] = op(a[i0:i1,j0:j1])
+                out[i,j] = op(a[i0:i1, j0:j1])
     '''
-    assert(a.dtype == numpy.double)
-    if not opname.startswith('NP_'):
-        opname = 'NP_' + opname
-    op = getattr(_np_helper, opname)
     if loc_y is None:
         loc_y = loc_x
     loc_x = numpy.asarray(loc_x, numpy.int32)
     loc_y = numpy.asarray(loc_y, numpy.int32)
     nloc_x = loc_x.size - 1
     nloc_y = loc_y.size - 1
+    opname = opname.replace('numpy.', '').replace('np.', '')
+    if opname.startswith('NP_'):
+        opname = opname[3:]
+
+    if (a.dtype != numpy.double or
+        opname not in ('sum', 'max', 'min', 'abssum', 'absmax', 'absmin', 'norm')):
+        tmp = numpy.empty((nloc_x, a.shape[1]), dtype=a.dtype)
+        out = numpy.empty((nloc_x, nloc_y), dtype=a.dtype)
+        op = getattr(numpy, opname)
+        for i, (i0, i1) in enumerate(zip(loc_x[:-1], loc_x[1:])):
+            tmp[i] = op(a[i0:i1], axis=0)
+        for j, (j0, j1) in enumerate(zip(loc_y[:-1], loc_y[1:])):
+            out[:,j] = op(tmp[:,j0:j1], axis=1)
+        return out
+
+    op = getattr(_np_helper, 'NP_' + opname)
     if a.flags.f_contiguous:
-        out = numpy.zeros((nloc_x, nloc_y), order='F')
-    else:
-        a = numpy.asarray(a, order='C')
-        out = numpy.zeros((nloc_x, nloc_y))
+        a = transpose(a.T)
+    a = numpy.asarray(a, order='C')
+    out = numpy.zeros((nloc_x, nloc_y))
     _np_helper.NPcondense(op, out.ctypes.data_as(ctypes.c_void_p),
                           a.ctypes.data_as(ctypes.c_void_p),
                           loc_x.ctypes.data_as(ctypes.c_void_p),
@@ -1093,10 +1134,13 @@ class NPArrayWithTag(numpy.ndarray):
         numpy.ndarray.__setstate__(self, state[0:-1])
         self.__dict__.update(state[-1])
 
-    # Whenever the contents of the array was modified (through ufunc), the tag
+    # Whenever the contents of the array were modified (through ufunc), the tag
     # should be expired. Overwrite the output of ufunc to restore ndarray type.
     def __array_wrap__(self, out, context=None):
-        return numpy.ndarray.__array_wrap__(self, out, context).view(numpy.ndarray)
+        if out.ndim == 0:  # if ufunc returns a scalar
+            return out[()]
+        else:
+            return out.view(numpy.ndarray)
 
 
 def tag_array(a, **kwargs):
@@ -1150,6 +1194,46 @@ def split_reshape(a, shapes):
         size = p1
         return tensors, size
     return sub_split(a, shapes)[0]
+
+def locs_to_indices(locs, segement_list):
+    '''
+    Generate indices based on the segement information list "locs" and the
+    required segements.
+
+    Args:
+        locs : list or ndarray
+            locs[i], locs[i+1] indicates the [start:end] index for i-th segement
+        segement_list: list or ndarray
+            The segement Ids to extract.
+
+    Examples::
+
+    >>> locs_to_indices([0, 2, 5, 6, 9, 15, 17], [0, 2, 3, 5])
+    array([0, 1, 5, 6, 7, 8, 15, 16])
+
+    >>> locs_to_indices([0, 2, 5, 6, 9], array([True, False, True, True]))
+    array([0, 1, 5, 6, 7, 8])
+    '''
+    segement_list = numpy.asarray(segement_list)
+    if segement_list.dtype == bool:
+        segement_list = numpy.where(segement_list)[0]
+    nsegs = segement_list.size
+    if nsegs == 0:
+        idx = []
+    elif nsegs == 1:
+        i0, i1 = locs[segement_list[0]:segement_list[0]+2]
+        idx = numpy.arange(i0, i1)
+    else:
+        assert segement_list[-1] < len(locs)
+        # Find the dis-continued Ids in segement_list
+        bas_mask = segement_list[:-1] + 1 != segement_list[1:]
+        segs_loc = numpy.hstack([0, numpy.where(bas_mask)[0] + 1, nsegs])
+        idx = []
+        for b0, b1 in zip(segs_loc[:-1], segs_loc[1:]):
+            i0, i1 = locs[segement_list[b0]], locs[segement_list[b1-1]+1]
+            idx.append(numpy.arange(i0, i1))
+        idx = numpy.hstack(idx)
+    return numpy.asarray(idx, dtype=numpy.int32)
 
 if __name__ == '__main__':
     a = numpy.random.random((30,40,5,10))

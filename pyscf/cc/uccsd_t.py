@@ -115,7 +115,7 @@ def kernel(mycc, eris, t1=None, t2=None, verbose=logger.NOTE):
     cpu1 = log.timer_debug1('contract_bbb', *cpu1)
 
     # Cache t2abT in t2ab to reduce memory footprint
-    assert(t2ab.flags.c_contiguous)
+    assert (t2ab.flags.c_contiguous)
     t2abT = lib.transpose(t2ab.copy().reshape(nocca*noccb,nvira*nvirb), out=t2ab)
     t2abT = t2abT.reshape(nvira,nvirb,nocca,noccb)
     # baa
@@ -186,7 +186,7 @@ def _gen_contract_aaa(t1T, t2T, vooo, fock, mo_energy, orbsym, log):
     v_ir_loc = v_ir_loc.astype(numpy.int32)
     oo_ir_loc = oo_ir_loc.astype(numpy.int32)
     dtype = numpy.result_type(t2T.dtype, vooo.dtype, fock.dtype)
-    if dtype == numpy.complex:
+    if dtype == numpy.complex128:
         drv = _ccsd.libcc.CCuccsd_t_zaaa
     else:
         drv = _ccsd.libcc.CCuccsd_t_aaa
@@ -226,7 +226,7 @@ def _gen_contract_baa(ts, vooo, fock, mo_energy, orbsym, log):
 
     cpu2 = [logger.process_clock(), logger.perf_counter()]
     dtype = numpy.result_type(t2aaT.dtype, vooo.dtype)
-    if dtype == numpy.complex:
+    if dtype == numpy.complex128:
         drv = _ccsd.libcc.CCuccsd_t_zbaa
     else:
         drv = _ccsd.libcc.CCuccsd_t_baa
